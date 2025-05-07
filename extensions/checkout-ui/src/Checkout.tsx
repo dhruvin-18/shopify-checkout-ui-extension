@@ -79,7 +79,7 @@ function Extension() {
     getVariantData();
   }, []);
 
-  useEffect(() => {
+/*   useEffect(() => {
     if (isSelected)
     { 
       applyCartLineChange({
@@ -100,7 +100,29 @@ function Extension() {
         });
       }
     }
-  },[isSelected]);
+  },[isSelected]); */
+  
+  useEffect(() => {
+    const cartLineId = cartLines.find(
+      (cartLine) => cartLine.merchandise.id === variantID
+    )?.id;
+  
+    if (isSelected && !cartLineId) {
+      // Add the product to the cart if it's selected and not already in the cart
+      applyCartLineChange({
+        type: "addCartLine",
+        quantity: 1,
+        merchandiseId: variantID,
+      });
+    } else if (!isSelected && cartLineId) {
+      // Remove the product from the cart if it's deselected and exists in the cart
+      applyCartLineChange({
+        type: "removeCartLine",
+        id: cartLineId,
+        quantity: 1,
+      });
+    }
+  }, [isSelected, cartLines]);
 
   if (!variantData) return null;
   return (
@@ -122,8 +144,12 @@ function Extension() {
           columns={["auto", 80, "fill"]}
           padding="base"
           >
-          <Checkbox 
+          {/* <Checkbox 
             checked={isSelected} 
+          /> */}
+          <Checkbox 
+            checked={isSelected || !!cartLines.find(cartLine => cartLine.merchandise.id === variantID)}
+            disabled={!!cartLines.find(cartLine => cartLine.merchandise.id === variantID)}
           />
           <Image 
             source = { variantData.image?.url || variantData.product.featuredImage?.url} 
