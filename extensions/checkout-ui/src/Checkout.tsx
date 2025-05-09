@@ -12,7 +12,8 @@ import {
   BlockSpacer,
   Divider,
   useCartLines,
-  useApplyCartLinesChange
+  useApplyCartLinesChange,
+  useAttributes,
 } from "@shopify/ui-extensions-react/checkout";
 
 // 1. Choose an extension target
@@ -20,7 +21,7 @@ export default reactExtension("purchase.checkout.cart-line-list.render-after", (
   <Extension />
 ));
 
-const variantID = "gid://shopify/ProductVariant/50375685767447"; // Replace with your variant ID
+const variantID = "gid://shopify/ProductVariant/50378977247511"; // Replace with your variant ID
 interface VariantData {
   title: string;
   price: {
@@ -42,16 +43,25 @@ interface VariantData {
 
 function Extension() {
   const { query } = useApi();
-  const [variantData, setVariantData] = useState<null | VariantData>(null);
-  const [isSelected, setIsSelected] = useState(false);
+
+  const attributes = useAttributes();
+  const titleAttibute =  attributes.find(attribute => attribute.key === "app-title")?.value;
+
+  const variantIdsAttribute = attributes.find(
+    attribute => attribute.key === "app-variant-ids"
+  )?.value?.split(",");  
+
+  const [variantsData, setVariantsData] = useState<null | VariantData[]>(null);
 
   const cartLines = useCartLines();
   const applyCartLineChange = useApplyCartLinesChange();
+
   useEffect(() => {
-    async function getVariantData() {
-      const queryResult = await query<{node: VariantData}>(`{
-          node(id: "${variantID}") {
+    async function getVariantData(variantID: string): Promise< VariantData | null > {
+      const queryResult = await query<{ node: VariantData }>(`{
+          node(id: "gid://shopify/ProductVariant/${variantID}") {
             ... on ProductVariant {
+              id
               title
               price {
                 amount
@@ -71,60 +81,58 @@ function Extension() {
             }
           }
         }`);
-        if (queryResult.data) {
-          setVariantData(queryResult.data.node);
+        console.log({queryResult});
+        
+        if(queryResult.errors){
+          throw queryResult.errors
         }
-        console.log("queryResult", queryResult);
+        else {
+          return queryResult.data.node
+        }
+      }
+
+    async function getVariantsData() {
+      const results = await Promise.allSettled(
+        variantIdsAttribute.map(getVariantData)
+      );
+      const filteredResults = results
+      .filter((item) => item.status === "fulfilled" &&  item.value !== null)
+      .map((item) => (item as PromiseFulfilledResult<VariantData>).value);
+
+      setVariantsData(filteredResults);      
+    }  
+    if (variantIdsAttribute) {
+      getVariantsData();
     }
-    getVariantData();
   }, []);
 
-/*   useEffect(() => {
-    if (isSelected)
-    { 
-      applyCartLineChange({
-        type: "addCartLine",
-        quantity: 1,
-        merchandiseId: variantID,
-      })
-    }else {
-      const cartLineId = cartLines.find(
-        cartLine => cartLine.merchandise.id === variantID
-      )?.id
+  async function handleUpsellProductClick(
+    variantId: string,
+    isInCart: boolean,
+  ) {      
+      if (isInCart)
+      {
+        const cartLineId = cartLines.find(
+          cartLine => cartLine.merchandise.id === variantID
+        )?.id
 
-      if (cartLineId) {
+        if (cartLineId) {
+          applyCartLineChange({
+            type: "removeCartLine",
+            id: cartLineId,
+            quantity: 1,
+          });
+        }
+      }else {
         applyCartLineChange({
-          type: "removeCartLine",
-          id: cartLineId,
+          type: "addCartLine",
           quantity: 1,
+          merchandiseId: variantID,
         });
       }
     }
-  },[isSelected]); */
-  
-  useEffect(() => {
-    const cartLineId = cartLines.find(
-      (cartLine) => cartLine.merchandise.id === variantID
-    )?.id;
-  
-    if (isSelected && !cartLineId) {
-      // Add the product to the cart if it's selected and not already in the cart
-      applyCartLineChange({
-        type: "addCartLine",
-        quantity: 1,
-        merchandiseId: variantID,
-      });
-    } else if (!isSelected && cartLineId) {
-      // Remove the product from the cart if it's deselected and exists in the cart
-      applyCartLineChange({
-        type: "removeCartLine",
-        id: cartLineId,
-        quantity: 1,
-      });
-    }
-  }, [isSelected, cartLines]);
 
-  if (!variantData) return null;
+  if ( !variantsData || !variantID ) return null;
   return (
     <>
     <Divider />
@@ -132,87 +140,46 @@ function Extension() {
         spacing="base"
       />
       <Heading level={2}>
-        Other products you may like
+        { titleAttibute || "Other products you may like" }
       </Heading>
       <BlockSpacer 
         spacing="base"
       />
-      <Pressable onPress={() => setIsSelected(!isSelected)}>
-        <InlineLayout 
-          blockAlignment="center" 
-          spacing={["base", "base"]} 
-          columns={["auto", 80, "fill"]}
-          padding="base"
-          >
-          {/* <Checkbox 
-            checked={isSelected} 
-          /> */}
-          <Checkbox 
-            checked={isSelected || !!cartLines.find(cartLine => cartLine.merchandise.id === variantID)}
-            disabled={!!cartLines.find(cartLine => cartLine.merchandise.id === variantID)}
-          />
-          <Image 
-            source = { variantData.image?.url || variantData.product.featuredImage?.url} 
-            accessibilityDescription = { variantData.image?.altText || variantData.product.featuredImage?.altText}
-            borderRadius="base"
-            border="base"
-            borderWidth="base"
-            cornerRadius="base"
-            />
-        <BlockStack>
-          <Text>
-            {variantData.product.title} - {variantData.title} 
-          </Text>
-          <Text>
-            {variantData.price.amount} {variantData.price.currencyCode}
-          </Text>
-        </BlockStack>
-        </InlineLayout>
-      </Pressable>
+      { variantsData.map((variantData) => {
+        const isInCart = Boolean (cartLines.find(cartLine => cartLine.merchandise.id === variantData.id));
+        return (
+          <Pressable onPress={() => handleUpsellProductClick(variantData.id, isInCart)} key={variantData.id}>
+            <InlineLayout 
+              blockAlignment="center" 
+              spacing={["base", "base"]} 
+              columns={["auto", 80, "fill"]}
+              padding="base"
+              >
+              <Checkbox 
+                checked={isInCart} 
+              />
+              <Image 
+                source = { variantData.image?.url || variantData.product.featuredImage?.url} 
+                accessibilityDescription = { variantData.image?.altText || variantData.product.featuredImage?.altText}
+                borderRadius="base"
+                border="base"
+                borderWidth="base"
+                cornerRadius="base"
+                aspectRatio={1}
+                fit = "contain"
+                />
+            <BlockStack>
+              <Text>
+                {variantData.product.title} - {variantData.title} 
+              </Text>
+              <Text>
+                {variantData.price.amount} {variantData.price.currencyCode}
+              </Text>
+            </BlockStack>
+            </InlineLayout>
+          </Pressable>
+        )
+      })}
     </>
   );
 }
-
-/* function Extension() {
-  const translate = useTranslate();
-  const { extension } = useApi();
-  const instructions = useInstructions();
-  const applyAttributeChange = useApplyAttributeChange();
-
-
-  // 2. Check instructions for feature availability, see https://shopify.dev/docs/api/checkout-ui-extensions/apis/cart-instructions for details
-  if (!instructions.attributes.canUpdateAttributes) {
-    // For checkouts such as draft order invoices, cart attributes may not be allowed
-    // Consider rendering a fallback UI or nothing at all, if the feature is unavailable
-    return (
-      <Banner title="checkout-ui" status="warning">
-        {translate("attributeChangesAreNotSupported")}
-      </Banner>
-    );
-  }
-
-  // 3. Render a UI
-  return (
-    // <BlockStack border={"dotted"} padding={"tight"}>
-    //   <Banner title="checkout-ui">
-    //     {translate("welcome", {
-    //       target: <Text emphasis="italic">{extension.target}</Text>,
-    //     })}
-    //   </Banner>
-    //   <Checkbox onChange={onCheckboxChange}>
-    //     {translate("iWouldLikeAFreeGiftWithMyOrder")}
-    //   </Checkbox>
-    // </BlockStack>
-      <Text>Hello World!...</Text>
-  );
-
-  async function onCheckboxChange(isChecked) {
-    // 4. Call the API to modify checkout
-    const result = await applyAttributeChange({
-      key: "requestedFreeGift",
-      type: "updateAttribute",
-      value: isChecked ? "yes" : "no",
-    });
-    console.log("applyAttributeChange result", result);
-  }
-} */
